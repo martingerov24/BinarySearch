@@ -315,33 +315,30 @@ static void binarySearch(const AlignedIntArray &hayStack, const AlignedIntArray 
 	}
 }
 
-__m256i getHalfInAvx(
-	const int* __restrict__ count
-) {
-    __m256i count_avx = _mm256_load_si256((__m256i*)count);
-	__m256i half_avx = _mm256_srli_epi32(count_avx, 2);
-	return half_avx;
-}
 
-__m256i getNumInAvx(
-	const AlignedIntArray &hayStack, 
-	const int* __restrict__ left, 
-	const int* __restrict__ half, 
-	int* __restrict__ num
+union vec_union {
+    __m256i avx;
+    int i[8];
+};
+
+
+void getNumInAvx(
+	const AlignedIntArray &hayStack,
+	vec_union& __restrict__ u,
+	int*& __restrict__ num
 ) {
 	for(int i = 0; i < 8; i++) {
-		num[i] = hayStack[left[i] + half[i]];
+		num[i] = hayStack[u.i[i]];
 	}
-	return _mm256_load_si256((__m256i*)num);
 }
 
-__m256i multAddIntAvx(
-	__m256i& __restrict__ a,
-	__m256i& __restrict__ b,
-	__m256i& __restrict__ c
-) {
-	return _mm256_add_epi32(_mm256_mul_epi32(a, b), c);
-}
+// __m256i multAddIntAvx(
+// 	__m256i& __restrict__ a,
+// 	__m256i& __restrict__ b,
+// 	__m256i& __restrict__ c
+// ) {
+// 	return _mm256_add_epi32(_mm256_mul_epi32(a, b), c);
+// }
 
 void computeLeft(
 	__m256i& __restrict__ left_avx,
@@ -379,32 +376,6 @@ bool loopWhile(__m256i& __restrict__ count) {
 }
 
 static void betterSearch(const AlignedIntArray &hayStack, const AlignedIntArray & needles, AlignedIntArray &indices, StackAllocator &allocator) {
-	for (int c = 0; c < needles.getCount(); c++) {
-		const int value = needles[c];
-
-		int left = 0;
-		int count = hayStack.getCount();
-		int half = count;
-		while (half > 0) {
-			half = count >> 1;
-			int res = hayStack[left + half] < value;
-			left = left + (half*res + res);
-			int oneBit = count & 0x1;
-			count = half + oneBit - res;
-		}
-
-		if (hayStack[left] == value) {
-			indices[c] = left;
-		} else {
-			indices[c] = -1;
-		}
-	}
-}
-void test(StackAllocator &allocator) {
-	std::vector<int> indices(10);
-	std::vector<int> hayStack = {0,1,2,3,4,5,6,7,8,9,10};
-	int res = 0;
-
 	const int n = sizeof(__m256i) / sizeof(int32_t);
 	int* value = allocator.alloc<int>(n);
 	int* hayStackP = allocator.alloc<int>(n);
@@ -414,25 +385,55 @@ void test(StackAllocator &allocator) {
 	int* count = allocator.alloc<int>(n);
 	int* left = allocator.alloc<int>(n);
 
-	for (int c = 0; c < indices.size(); c+=n) {
-		std::memcmp(value, indices.data() + c, n);
+	vec_union halfAndLeft;
+	for (int c = 0; c < needles.getCount(); c+=n) {
+		std::memcmp(value, needles.get() + c, n);
 		std::memset(left, 0, n * sizeof(int));
 		std::memset(count, hayStack.getCount(), n * sizeof(int));
 
+		__m256i left_avx = _mm256_load_si256((__m256i*)left);
 		__m256i count_avx = _mm256_load_si256((__m256i*)count);
 		while(loopWhile(count_avx)) {
-			__m256i half_avx = getHalfInAvx(count);
-			__m256i num_avx = getNumInAvx(hayStack, left, half, num);
+			__m256i half_avx = _mm256_srli_epi32(count_avx, 1);
+			halfAndLeft.avx = _mm256_add_epi32(half_avx, left_avx);
+			getNumInAvx(hayStack, halfAndLeft, num);
+			__m256i num_avx = _mm256_load_si256((__m256i*)num);
 			diversity(half_avx, num_avx, count_avx, left, value);
 		}
-		
-		
-		if (hayStack[left] == value) {
-			indices[c] = left;
-		} else {
-			indices[c] = -1;
-		}
 	}
+	// for (int c = 0; c < needles.getCount(); c++) {
+	// 	const int value = needles[c];
+
+	// 	int left = 0;
+	// 	int count = hayStack.getCount();
+	// 	int half = count;
+	// 	while (half > 0) {
+	// 		half = count >> 1;
+	// 		int res = hayStack[left + half] < value;
+	// 		left = left + (half*res + res);
+	// 		int oneBit = count & 0x1;
+	// 		count = half + oneBit - res;
+	// 	}
+
+	// 	if (hayStack[left] == value) {
+	// 		indices[c] = left;
+	// 	} else {
+	// 		indices[c] = -1;
+	// 	}
+	// }
+		
+		
+	// 	if (hayStack[left] == value) {
+	// 		indices[c] = left;
+	// 	} else {
+	// 		indices[c] = -1;
+	// 	}
+	// }
+}
+void test() {
+	std::vector<int> indices(10);
+	std::vector<int> hayStack = {0,1,2,3,4,5,6,7,8,9,10};
+	int res = 0;
 	for	(int i = 0; i < 10; i++) 
 	{
 		const int value = i;

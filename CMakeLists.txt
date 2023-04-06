@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 project(fmi_binary_search LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 add_compile_options(-mavx)
+add_compile_options(-mavx2)
+add_compile_options(-msse4.1)
+add_compile_options(-mavx512vl)
+
 
 set(SOURCES 
     main.cpp 
