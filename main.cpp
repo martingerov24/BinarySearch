@@ -373,7 +373,38 @@ void diversity(
 	count = _mm256_add_epi32(half_avx, result);
 }
 
+bool loopWhile(__m256i& __restrict__ count) {
+	static __m256i onlyZeros = _mm256_setzero_si256();
+	return _mm256_cmpgt_epi32_mask(count, onlyZeros) > 0;
+}
+
 static void betterSearch(const AlignedIntArray &hayStack, const AlignedIntArray & needles, AlignedIntArray &indices, StackAllocator &allocator) {
+	for (int c = 0; c < needles.getCount(); c++) {
+		const int value = needles[c];
+
+		int left = 0;
+		int count = hayStack.getCount();
+		int half = count;
+		while (half > 0) {
+			half = count >> 1;
+			int res = hayStack[left + half] < value;
+			left = left + (half*res + res);
+			int oneBit = count & 0x1;
+			count = half + oneBit - res;
+		}
+
+		if (hayStack[left] == value) {
+			indices[c] = left;
+		} else {
+			indices[c] = -1;
+		}
+	}
+}
+void test(StackAllocator &allocator) {
+	std::vector<int> indices(10);
+	std::vector<int> hayStack = {0,1,2,3,4,5,6,7,8,9,10};
+	int res = 0;
+
 	const int n = sizeof(__m256i) / sizeof(int32_t);
 	int* value = allocator.alloc<int>(n);
 	int* hayStackP = allocator.alloc<int>(n);
@@ -383,52 +414,47 @@ static void betterSearch(const AlignedIntArray &hayStack, const AlignedIntArray 
 	int* count = allocator.alloc<int>(n);
 	int* left = allocator.alloc<int>(n);
 
-	for (int c = 0; c < needles.getCount(); c+=n) {
-		std::memcmp(value, needles.get() + c, n);
+	for (int c = 0; c < indices.size(); c+=n) {
+		std::memcmp(value, indices.data() + c, n);
 		std::memset(left, 0, n * sizeof(int));
 		std::memset(count, hayStack.getCount(), n * sizeof(int));
 
-		__m256i count_avx;
-		// while (count > 0) {
-		__m256i half_avx = getHalfInAvx(count);
-		__m256i num_avx = getNumInAvx(hayStack, left, half, num);
-		diversity(half_avx, num_avx, count_avx, left, value);
+		__m256i count_avx = _mm256_load_si256((__m256i*)count);
+		while(loopWhile(count_avx)) {
+			__m256i half_avx = getHalfInAvx(count);
+			__m256i num_avx = getNumInAvx(hayStack, left, half, num);
+			diversity(half_avx, num_avx, count_avx, left, value);
+		}
 		
-// if (hayStack[left] == value) {
-		// 	indices[c] = left;
-		// } else {
-		// 	indices[c] = -1;
-		// }
+		
+		if (hayStack[left] == value) {
+			indices[c] = left;
+		} else {
+			indices[c] = -1;
+		}
 	}
-}
-
-void test() {
-
-	int res = 0;
-	for	(int i = 0; i < 10; i++) {
+	for	(int i = 0; i < 10; i++) 
+	{
 		const int value = i;
-		std::vector<int> hayStack = {0,1,2,3,4,5,6,7,8,9,10};
+
 		int left = 0;
 		int count = hayStack.size();
-
-		while (count > 0) {
-			const int half = count / 2;
-			const int num = hayStack[left + half]; 
-			if (num == value) {
-				left = left + half;
-				break;
-			} else if(num < value){
-				left = left + half + 1;
-				count -= half + 1;
-			} else {
-				count = half;
-			}
+	
+		int half = count;
+		while (half > 0) {
+			printf("left = %d, count = %d\n", left, count);
+			half = count >> 1;
+			int res = hayStack[left + half] < value;
+			left = left + (half*res + res);
+			int oneBit = count & 0x1;
+			count = half + oneBit - res;
 		}
+		printf("left = %d, count = %d\n", left, count);
 
 		if (hayStack[left] == value) {
-			res = left;
+			indices[i] = left;
 		} else {
-			res = -1;
+			indices[i] = -1;
 		}
 	}
 }
