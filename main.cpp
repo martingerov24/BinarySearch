@@ -348,12 +348,10 @@ __m256i getNumInAvx(
 }
 
 //int res = hayStack[left + half] < value;
-
 bool shouldLoop(__m256i& __restrict__ count) {
     static __m256i onlyZeros = _mm256_setzero_si256();
-    vec_union num;
-	num.avx = _mm256_cmpgt_epi32(count, onlyZeros);
-    int mask = _mm256_movemask_epi8(num.avx);
+	__m256i num = _mm256_cmpgt_epi32(count, onlyZeros);
+    int mask = _mm256_movemask_epi8(num);
     return (mask != 0);
 }
 
@@ -365,28 +363,11 @@ void computeLeft(
 ) {
 	static __m256i maskOne = _mm256_set1_epi32(0x1);
 	__m256i resultInOneBit = _mm256_and_si256(result, maskOne);
-	__m256i left_avx_cpy = left_avx;
-#if DEBUG
-	vec_union mult;
-	vec_union add;
-	vec_union left_avx_cpy;
-	vec_union res;
-	vec_union half;
-	half.avx = half_avx;
-	res.avx = result;
-	left_avx_cpy.avx = left_avx;
-	mult.avx = _mm256_and_si256(half.avx, res.avx);
-	add.avx = _mm256_add_epi32(mult.avx, resultInOneBit);
-	left_avx = _mm256_add_epi32(left_avx_cpy.avx, add.avx);
-#else
 	__m256i mult = _mm256_and_si256(half_avx, result);
 	__m256i add = _mm256_add_epi32(mult, resultInOneBit);
-	left_avx = _mm256_add_epi32(left_avx_cpy, add);
-#endif
+	left_avx = _mm256_add_epi32(left_avx, add);
 }
 
-
-// count = half + (count & 0x1) - res;
 // count = half + (count & 0x1) - res;
 void computeCount(
 	__m256i& __restrict__ half, 
@@ -395,19 +376,9 @@ void computeCount(
 ) {
 	static __m256i oneBit = _mm256_set1_epi32(0x1); 
 	__m256i resultInOneBit = _mm256_and_si256(resultOfCompare, oneBit);
-#if DEBUG
-	vec_union oddEven;
-	vec_union sum;
-	vec_union count_u;	 
-	oddEven.avx = _mm256_and_si256(count, oneBit);
-	sum.avx = _mm256_add_epi32(half, oddEven.avx);
-	count_u.avx = _mm256_sub_epi32(sum.avx, resultInOneBit);
-	count = count_u.avx;
-#else
 	__m256i oddEven = _mm256_and_si256(count, oneBit);
 	__m256i sum = _mm256_add_epi32(half, oddEven);
 	count = _mm256_sub_epi32(sum, resultInOneBit);
-#endif
 }
 
 void fill_indices(
@@ -441,39 +412,44 @@ void setCount(__m256i& __restrict__ result, const int hayStackCount, const bool 
 }
 
 static void betterSearch(const AlignedIntArray &hayStack, const AlignedIntArray & needles, AlignedIntArray &indices, StackAllocator &allocator) {
-	const int n = sizeof(__m256i) / sizeof(int32_t);
-	int* num = allocator.alloc<int>(n);
-	vec_union count_avx;
-	vec_union halfAndLeft;
-	vec_union left_avx;
-	vec_union value_avx;
-	vec_union half_avx;
-	vec_union num_avx;
-	vec_union result;
 	const int needlesCount = needles.getCount();
 	const int hayStackCount = hayStack.getCount();
+	if(hayStack[0] == hayStack[hayStackCount -1]) {
+		for (int i = 0; i < needlesCount; i++) {
+			if(needles[i] == hayStack[0]) {
+				indices[i] = 0;
+			} else {
+				indices[i] = -1;
+			}
+		}
+		return;
+	}
+	const int n = sizeof(__m256i) / sizeof(int32_t);
+	int* num = allocator.alloc<int>(n);
+	vec_union* vec_unions = allocator.alloc<vec_union>(3);
+	__m256i* m256int = allocator.alloc<__m256i>(4);
+
+	vec_union& halfAndLeft = vec_unions[0];
+	vec_union& left_avx = vec_unions[1];
+	vec_union& value_avx = vec_unions[2];
+	__m256i& count_avx = m256int[0];
+	__m256i& half_avx = m256int[1];
+	__m256i& num_avx = m256int[2];
+	__m256i& result = m256int[3];
+
 	for (int c = 0; c < needlesCount; c+=n) {
 		value_avx.avx = _mm256_load_si256((__m256i*)(needles.get() + c));
-		TEST_PRINT(value_avx, "value");
 		left_avx.avx = _mm256_setzero_si256();
-		TEST_PRINT(left_avx, "left");
-		setCount(count_avx.avx, hayStackCount);
-		TEST_PRINT(count_avx, "count");
-		half_avx.avx = count_avx.avx;
-		while(shouldLoop(half_avx.avx)) {
-			half_avx.avx = _mm256_srli_epi32(count_avx.avx, 1);
-			TEST_PRINT(half_avx, "half_avx");
-			halfAndLeft.avx = _mm256_add_epi32(half_avx.avx, left_avx.avx);
-			TEST_PRINT(halfAndLeft, "halfAndLeft");
-			num_avx.avx  = getNumInAvx(hayStack.get(), halfAndLeft, num);
-			TEST_PRINT(num_avx, "num_avx");
-			result.avx = _mm256_cmpgt_epi32(value_avx.avx, num_avx.avx);
-			TEST_PRINT(result, "result");
+		setCount(count_avx, hayStackCount);
+		half_avx = count_avx;
+		while(shouldLoop(half_avx)) {
+			half_avx = _mm256_srli_epi32(count_avx, 1);
+			halfAndLeft.avx = _mm256_add_epi32(half_avx, left_avx.avx);
+			num_avx  = getNumInAvx(hayStack.get(), halfAndLeft, num);
+			result = _mm256_cmpgt_epi32(value_avx.avx, num_avx);
 
-			computeLeft(left_avx.avx, half_avx.avx, result.avx);
-			computeCount(half_avx.avx, count_avx.avx, result.avx);
-			TEST_PRINT(left_avx, "left");
-			TEST_PRINT(count_avx, "count");
+			computeLeft(left_avx.avx, half_avx, result);
+			computeCount(half_avx, count_avx, result);
 		}
 		for(int i = 0; i < 8; i++) {
 			if(hayStack[left_avx.i[i]] == value_avx.i[i]) {
@@ -483,7 +459,7 @@ static void betterSearch(const AlignedIntArray &hayStack, const AlignedIntArray 
 			}
 		}
 	}
-	setCount(count_avx.avx, hayStack.getCount(), true);
+	setCount(count_avx, hayStack.getCount(), true);
 	allocator.freeAll();
 }
 
